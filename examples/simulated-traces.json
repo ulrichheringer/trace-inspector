@@ -1,0 +1,6 @@
+{
+  "resourceSpans": [
+    {"resource":{"attributes":[{"key":"service.name","value":{"stringValue":"checkout"}}]},"scopeSpans":[{"spans":[{"traceId":"a1","spanId":"01","name":"checkout request"}]}]},
+    {"resource":{"attributes":[{"key":"service.name","value":{"stringValue":"payments"}}]},"scopeSpans":[{"spans":[{"traceId":"a1","spanId":"02","parentSpanId":"ff","name":"charge"}]}]}
+  ]
+}
