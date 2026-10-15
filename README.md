@@ -1,6 +1,6 @@
 # trace-inspector
 
-Inspect an OpenTelemetry OTLP JSON trace export for spans whose parent is missing and traces with roots in multiple services.
+Print an OpenTelemetry trace tree from OTLP JSON and flag spans whose parent is missing or traces with roots in multiple services.
 
 ## Install
 

@@ -19,6 +19,17 @@ func TestInspectFindsMissingParentAndMultipleRoots(t *testing.T) {
 	}
 }
 
+func TestRenderBuildsServiceSpanTree(t *testing.T) {
+	export := Export{ResourceSpans: []ResourceSpans{
+		{Resource: Resource{Attributes: []Attribute{{Key: "service.name", Value: []byte(`{"stringValue":"checkout"}`)}}}, ScopeSpans: []ScopeSpans{{Spans: []Span{{TraceID: "abc", SpanID: "01", Name: "request"}}}}},
+		{Resource: Resource{Attributes: []Attribute{{Key: "service.name", Value: []byte(`{"stringValue":"payments"}`)}}}, ScopeSpans: []ScopeSpans{{Spans: []Span{{TraceID: "abc", SpanID: "02", ParentSpanID: "01", Name: "charge"}}}}},
+	}}
+	lines := Render(export)
+	if len(lines) != 3 || lines[0] != "Trace abc" || lines[2] != "  [payments] charge (span 02)" {
+		t.Fatalf("unexpected trace tree: %#v", lines)
+	}
+}
+
 func TestInspectIgnoresSingleServiceRoot(t *testing.T) {
 	export := Export{ResourceSpans: []ResourceSpans{{Resource: Resource{Attributes: []Attribute{{Key: "service.name", Value: []byte(`{"stringValue":"api"}`)}}}, ScopeSpans: []ScopeSpans{{Spans: []Span{{TraceID: "abc", SpanID: "1"}, {TraceID: "abc", SpanID: "2", ParentSpanID: "1"}}}}}}}
 	if findings := Inspect(export); len(findings) != 0 {

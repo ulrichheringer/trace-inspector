@@ -6,6 +6,7 @@ import (
 	"io"
 	"os"
 	"sort"
+	"strconv"
 	"strings"
 )
 
@@ -32,10 +33,11 @@ type Attribute struct {
 }
 
 type Span struct {
-	TraceID      string `json:"traceId"`
-	SpanID       string `json:"spanId"`
-	ParentSpanID string `json:"parentSpanId"`
-	Name         string `json:"name"`
+	TraceID      string          `json:"traceId"`
+	SpanID       string          `json:"spanId"`
+	ParentSpanID string          `json:"parentSpanId"`
+	Name         string          `json:"name"`
+	StartTime    json.RawMessage `json:"startTimeUnixNano"`
 }
 
 type Finding struct {
@@ -49,6 +51,110 @@ type Finding struct {
 type indexedSpan struct {
 	span    Span
 	service string
+}
+
+type displaySpan struct {
+	span    Span
+	service string
+}
+
+func Render(export Export) []string {
+	byTrace := make(map[string][]displaySpan)
+	for _, resource := range export.ResourceSpans {
+		service := attributeString(resource.Resource.Attributes, "service.name")
+		for _, scope := range resource.ScopeSpans {
+			for _, span := range scope.Spans {
+				if span.TraceID == "" || span.SpanID == "" {
+					continue
+				}
+				traceID := strings.ToLower(span.TraceID)
+				byTrace[traceID] = append(byTrace[traceID], displaySpan{span: span, service: service})
+			}
+		}
+	}
+
+	traceIDs := make([]string, 0, len(byTrace))
+	for traceID := range byTrace {
+		traceIDs = append(traceIDs, traceID)
+	}
+	sort.Strings(traceIDs)
+	var lines []string
+	for _, traceID := range traceIDs {
+		spans := byTrace[traceID]
+		byID := make(map[string]displaySpan, len(spans))
+		children := make(map[string][]displaySpan)
+		for _, item := range spans {
+			byID[strings.ToLower(item.span.SpanID)] = item
+		}
+		var roots []displaySpan
+		for _, item := range spans {
+			parent := strings.ToLower(item.span.ParentSpanID)
+			if parent == "" || byID[parent].span.SpanID == "" || parent == strings.ToLower(item.span.SpanID) {
+				roots = append(roots, item)
+			} else {
+				children[parent] = append(children[parent], item)
+			}
+		}
+		sortDisplay(roots)
+		for parent := range children {
+			sortDisplay(children[parent])
+		}
+		lines = append(lines, "Trace "+traceID)
+		visited := make(map[string]bool, len(spans))
+		var draw func(displaySpan, int, string)
+		draw = func(item displaySpan, depth int, marker string) {
+			id := strings.ToLower(item.span.SpanID)
+			if visited[id] {
+				return
+			}
+			visited[id] = true
+			name := item.span.Name
+			if name == "" {
+				name = "<unnamed>"
+			}
+			service := item.service
+			if service == "" {
+				service = "<unknown service>"
+			}
+			line := fmt.Sprintf("%s[%s] %s (span %s)", strings.Repeat("  ", depth), service, name, item.span.SpanID)
+			if marker != "" {
+				line += " [" + marker + "]"
+			}
+			lines = append(lines, line)
+			for _, child := range children[id] {
+				draw(child, depth+1, "")
+			}
+		}
+		for _, item := range roots {
+			marker := "root"
+			if item.span.ParentSpanID != "" {
+				marker = "orphan parent=" + item.span.ParentSpanID
+			}
+			draw(item, 0, marker)
+		}
+		for _, item := range spans {
+			if !visited[strings.ToLower(item.span.SpanID)] {
+				draw(item, 0, "cycle or disconnected span")
+			}
+		}
+	}
+	return lines
+}
+
+func sortDisplay(spans []displaySpan) {
+	sort.SliceStable(spans, func(i, j int) bool {
+		a, b := startNanos(spans[i].span), startNanos(spans[j].span)
+		if a != b {
+			return a < b
+		}
+		return spans[i].span.SpanID < spans[j].span.SpanID
+	})
+}
+
+func startNanos(span Span) int64 {
+	value := strings.Trim(string(span.StartTime), `" `)
+	parsed, _ := strconv.ParseInt(value, 10, 64)
+	return parsed
 }
 
 func Inspect(export Export) []Finding {
@@ -146,6 +252,11 @@ func run(args []string, stdout, stderr io.Writer) error {
 	var export Export
 	if err := json.NewDecoder(file).Decode(&export); err != nil {
 		return fmt.Errorf("decode OTLP JSON: %w", err)
+	}
+	for _, line := range Render(export) {
+		if _, err := fmt.Fprintln(stdout, line); err != nil {
+			return err
+		}
 	}
 	findings := Inspect(export)
 	if len(findings) == 0 {
